@@ -1,3 +1,4 @@
+import { assistantSidebar, assistantMessage } from "./assistant-sidebar";
 import { formatMessageTime } from "./message-time.ts";
 import { messageEntrySeqs, highlightMessage } from "./message-link.ts";
 import { appEditSlug } from "./app-edit";
@@ -606,7 +607,7 @@ export function createChatSurface(
     scopeId: string | null,
     messages: ReturnType<typeof entriesToMessages>,
   ): boolean {
-    if (appState.me?.welcomeCohort || appEditSlug(threadRef, appState.me?.user)) return false;
+    if (ctx.inbox || appState.me?.welcomeCohort || appEditSlug(threadRef, appState.me?.user)) return false;
     if (
       !shouldStartProactiveOpener({
         started: proactiveOpenerStarted,
@@ -932,7 +933,12 @@ export function createChatSurface(
     initialRun?: RunPoll,
     onStarted?: () => void,
   ): Promise<boolean> {
-    if (agent !== chatState.agent || appState.currentView !== "chats" || agent.state.isStreaming) return false;
+    if (
+      agent !== chatState.agent ||
+      (ctx.inbox ? !ctx.visible() : appState.currentView !== "chats") ||
+      agent.state.isStreaming
+    )
+      return false;
     await refreshTranscriptFromEntries(agent);
     if (agent !== chatState.agent || agent.state.isStreaming) return false;
     if (!initialRun) initialRun = await api<RunPoll>(`/api/runs/${encodeURIComponent(runId)}`);
@@ -1430,7 +1436,8 @@ export function createChatSurface(
   ctx.onDensityChange(() => drawActiveChat());
 
   function drawActiveChat(agent = chatState.agent, opts: { forceScroll?: boolean } = {}): void {
-    if (!agent || agent !== chatState.agent || !chatState.host || appState.currentView !== "chats") return;
+    if (!agent || agent !== chatState.agent || !chatState.host || (!ctx.inbox && appState.currentView !== "chats"))
+      return;
     adoptActiveSessionFromList(agent);
     if (!ctx.visible()) {
       postCurrentPaneState();
@@ -1449,6 +1456,7 @@ export function createChatSurface(
     const isNewUser = sessionsState.list.filter((s) => s.id).length === 0;
     const editingApp = appEditSlug(chatState.threadRef, appState.me?.user);
     const showWelcome =
+      !ctx.inbox &&
       !editingApp &&
       (appState.me?.welcomeCohort
         ? isWelcomeConversation(sessionsState.list, appState.me.user, chatState.threadRef, chatState.scopeId)
@@ -1464,6 +1472,7 @@ export function createChatSurface(
     const glanceTier = tier === "card" || tier === "strip" ? tier : null;
     const emptyChat = !messages.length && (showWelcome || !chatState.forkSession);
     const showSuggestions =
+      !ctx.inbox &&
       emptyChat &&
       !editingApp &&
       !(isNewUser && appState.me?.welcomeCohort) &&
@@ -1481,8 +1490,31 @@ export function createChatSurface(
           ),
         )
       : nothing;
-    render(
-      html`
+    let content: TemplateResult;
+    if (ctx.inbox) {
+      content = assistantSidebar({
+        context: ctx.inbox.context(),
+        messages: html`${pinnedStrip()} ${inheritedHeader()}
+        ${chatState.earlierCount > 0 ? earlierNotice(agent) : nothing} ${messageContent}
+        ${showStateError(messages, agent.state.errorMessage) ? html`<div class="composer-error inline">${agent.state.errorMessage}</div>` : nothing}`,
+        status: liveWorkStatus(agent),
+        busy: agent.state.isStreaming,
+        showPrompts: !messages.length,
+        toolbar: html`${goalStrip(agent)} ${ctx.composer.queuedStrip(agent)} ${backgroundActivityStrip()}`,
+        composer: ctx.composer.composerForm(agent),
+        onPrompt: (prompt) => ctx.composer.fillSuggestedPrompt(prompt, agent),
+        onDragEnter: (event) => ctx.composer.onDragEnter(event),
+        onDragOver: (event) => ctx.composer.onDragOver(event),
+        onDragLeave: (event) => ctx.composer.onDragLeave(event),
+        onDrop: (event) => void ctx.composer.onDrop(event, agent),
+        overlay: ctx.composer.state.dragging
+          ? html`<div class="drop-overlay">
+              <div class="drop-overlay-card">${icon(Files, 30)}<span>Drop files or folders to attach</span></div>
+            </div>`
+          : nothing,
+      });
+    } else {
+      content = html`
         <div
           class="custom-chat-shell ${editingApp ? "app-edit-chat" : ""} ${ctx.pane ? "in-pane" : ""} ${ctx.composer.state.dragging ? "dragging" : ""} ${
             emptyChat && !glanceTier && !editingApp ? "empty-chat" : ""
@@ -1517,9 +1549,9 @@ export function createChatSurface(
             ${ctx.composer.composerForm(agent)} ${ctx.pane ? nothing : suggestions}
           </div>
         </div>
-      `,
-      chatState.host,
-    );
+      `;
+    }
+    render(content, chatState.host);
     transcriptViewport.afterRender();
     const host = chatState.host;
     requestAnimationFrame(() => {
@@ -1709,6 +1741,23 @@ export function createChatSurface(
       const speaker = speakerLabelFor(message);
       const deleted = Boolean((message as { deleted?: boolean }).deleted);
       const edited = !deleted && Boolean((message as { edited?: boolean }).edited);
+      if (ctx.inbox)
+        return assistantMessage({
+          role: "human",
+          text: `${messageText(message)}${edited || deleted ? ` (${deleted ? "deleted" : "edited"})` : ""}`,
+          index,
+          entrySeqs: messageEntrySeqs(message).join(" "),
+          before: html`${speaker ? html`<div class="speaker-label">${speaker}</div>` : nothing}${attachmentGallery(attachments, (attachment) => browserRenderableImage(attachment.mimeType), userAttachmentBadge)}`,
+          after: sendFailure
+            ? html`<div class="send-failure">
+                <span>${sendFailure}</span
+                ><button class="btn compact" type="button" @click=${() => void retryFailedSend(message, index)}>
+                  ${icon(RefreshCw, 12)} Retry
+                </button>
+              </div>`
+            : nothing,
+          meta: messageMeta(message, index),
+        });
       return html`
         <article
           class="message-row user-row ${steered ? "steered-row" : ""}"
@@ -1813,6 +1862,18 @@ export function createChatSurface(
         Boolean(deliveredFiles?.length) ||
         msg.content.some((chunk) => chunk.type === "thinking" && chunk.thinking.trim());
       if (!hasVisibleContent && msg.stopReason !== "error" && msg.stopReason !== "aborted") return nothing;
+      if (ctx.inbox)
+        return assistantMessage({
+          role: "agent",
+          index,
+          entrySeqs: messageEntrySeqs(message)
+            .filter((seq) => !inlineSteers.has(seq))
+            .join(" "),
+          streaming: isStreaming,
+          content: html`${workView} ${assistantContent(msg, isStreaming, showWork)} ${assistantFileList(deliveredFiles)}
+          ${msg.stopReason === "error" && msg.errorMessage ? html`<div class="composer-error inline">${msg.errorMessage}</div>` : nothing}`,
+          meta: isStreaming ? nothing : messageMeta(msg, index),
+        });
       return html`
         <article
           class="message-row assistant-row ${isStreaming ? "streaming" : ""}"

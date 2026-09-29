@@ -32,6 +32,7 @@ import { modelGatewayRequest } from "../src/model/provider-endpoints.ts";
 import { reconstructMessagesFromHistory } from "../src/harness/replay.ts";
 import type { SessionEntry } from "../src/types.ts";
 import { testConfig } from "./support/test-config.ts";
+import { NonRetryableTurnError, ProviderTurnError, turnFailureMessage } from "../src/core/turn-error.ts";
 
 function countTempDirs(prefix: string): number {
   return readdirSync(tmpdir()).filter((name) => name.startsWith(prefix)).length;
@@ -610,6 +611,39 @@ test("piTurnError recovers the session's structured error when the agent loop re
 
   const err = piTurnError(session, new Error("An unknown error occurred"));
   assert.match(err.message, /Model provider API error \(overloaded_error\): Overloaded/);
+});
+
+test("transient Pi provider errors stay retryable and keep their message for the final failure", () => {
+  const failed = (errorMessage: string) =>
+    ({
+      getLastAssistantText: () => undefined,
+      messages: [{ role: "assistant", stopReason: "error", errorMessage, content: [] }],
+    }) as unknown as Parameters<typeof piTurnError>[0];
+
+  for (const errorMessage of [
+    '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+    '500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}',
+    "429 rate limit exceeded",
+    "fetch failed",
+  ]) {
+    const err = piTurnError(failed(errorMessage), new Error("An unknown error occurred"));
+    assert.ok(err instanceof ProviderTurnError, errorMessage);
+    assert.ok(!(err instanceof NonRetryableTurnError), errorMessage);
+    assert.equal(turnFailureMessage(err), err.message);
+    assert.throws(() => piLastAssistantTextOrThrow(failed(errorMessage)), ProviderTurnError);
+  }
+
+  for (const errorMessage of [
+    '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low."}}',
+    "429 insufficient_quota",
+    '400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215003 tokens > 200000 maximum"}}',
+    "prompt is too long: 215003 tokens > 200000 maximum",
+    '400 {"type":"error","error":{"type":"invalid_request_error","message":"thinking.budget_tokens must be at least 1500"}}',
+    '400 {"type":"invalid_request_error","message":"max_tokens must be at most 50000"}',
+    '429 {"type":"error","error":{"type":"rate_limit_error","message":"quota exceeded"}}',
+  ]) {
+    assert.ok(piTurnError(failed(errorMessage), new Error("x")) instanceof NonRetryableTurnError, errorMessage);
+  }
 });
 
 test("piTurnError falls back to the thrown error when the session has no structured error", () => {

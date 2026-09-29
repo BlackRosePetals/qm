@@ -10295,6 +10295,18 @@ h3.ambient-field-label {
   color: var(--working-dot, #2f81f7);
 }
 
+:is(.inbox-index-chat, .inbox-item-aside) .runtime-upgrade {
+  flex-wrap: wrap;
+}
+:is(.inbox-index-chat, .inbox-item-aside) .runtime-upgrade span {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+:is(.inbox-index-chat, .inbox-item-aside) .runtime-upgrade button {
+  max-width: 100%;
+  white-space: normal;
+}
 .inbox-chat-composer {
   flex: 0 0 auto;
   min-width: 0;

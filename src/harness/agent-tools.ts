@@ -1513,7 +1513,12 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
         }),
       ),
       name: Type.Optional(Type.String({ description: "open: short title for the subagent (default: from task)." })),
-      readOnly: Type.Optional(Type.Boolean({ description: "open: subagent may not change anything." })),
+      noComputer: Type.Optional(
+        Type.Boolean({
+          description:
+            "open: disable computer access entirely: no shell, filesystem, browser, or computer-backed integrations. Only memory/history, session coordination, runtime inspection, and permitted read-only connectors remain. Omit for tasks that need a computer to read email, files, or code; put 'do not modify anything' in task instead. Default false; cannot override an inherited restriction.",
+        }),
+      ),
       model: Type.Optional(Type.String({ description: "open: model override; fails closed if unavailable." })),
       harness: Type.Optional(Type.String({ description: "open: harness override." })),
       thinkingLevel: Type.Optional(Type.String({ description: "open: reasoning effort override." })),
@@ -1542,7 +1547,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
         fastMode?: boolean;
         task?: string;
         name?: string;
-        readOnly?: boolean;
+        noComputer?: boolean;
         model?: string;
         target?: string;
         text?: string;
@@ -1554,6 +1559,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
         action: p.action,
         ...(p.task ? { task: p.task } : {}),
         ...(p.name ? { name: p.name } : {}),
+        ...(p.noComputer !== undefined ? { noComputer: p.noComputer } : {}),
         ...(p.target ? { target: p.target } : {}),
         ...(p.text ? { text: p.text } : {}),
         ...(p.interrupt ? { interrupt: true } : {}),
@@ -1586,7 +1592,7 @@ export function createAgentTools(ref: ToolContextRef, opts?: AgentToolsOptions):
           ...(p.thinkingLevel ? { thinkingLevel: p.thinkingLevel } : {}),
           ...(p.fastMode !== undefined ? { fastMode: p.fastMode } : {}),
           ...(p.name ? { name: p.name } : {}),
-          ...(p.readOnly !== undefined ? { readOnly: p.readOnly } : {}),
+          ...(p.noComputer !== undefined ? { readOnly: p.noComputer } : {}),
           ...(p.model ? { model: p.model } : {}),
         });
         if (!result.ok) {

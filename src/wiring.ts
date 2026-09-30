@@ -274,7 +274,12 @@ import {
   type DeviceFlowCutoverReset,
   type DeviceFlowCutoverStore,
 } from "./credentials/device-flow-cutover.ts";
-import { createFeatureFlagStore, type FeatureFlagRecord, type FeatureFlagStore } from "./feature-flags.ts";
+import {
+  createFeatureFlagStore,
+  externalAppSharingAllowed,
+  type FeatureFlagRecord,
+  type FeatureFlagStore,
+} from "./feature-flags.ts";
 import { makeRefresh, type OAuthClientResolver, type OAuthState } from "./connectors/oauth.ts";
 import {
   createConnectorClientResolver,
@@ -1740,12 +1745,14 @@ export function buildApp(
     advisoryLock,
     canReadScope,
     canWriteScope,
+    externalSharingAllowed: (ownerScopeId) => externalAppSharingAllowed(featureFlags, ownerScopeId),
     canManageEmail: async (email) => {
       await identity.refresh();
       return (
         identity.isInternal(identity.classify(email)) &&
         ((await directory.get(email))?.type === "internal" ||
           config.emailAuthPrincipals?.includes(email) ||
+          Boolean(config.emailAuthDomain && email.endsWith(`@${config.emailAuthDomain}`)) ||
           identity.externalMember(email) !== undefined)
       );
     },
